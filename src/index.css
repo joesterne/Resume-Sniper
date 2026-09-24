@@ -1,0 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=Courier+Prime&family=Inter:wght@400;600&family=Playfair+Display:ital,wght@1,600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Courier Prime', 'Courier New', monospace;
+  --font-serif-italic: "Playfair Display", Georgia, serif;
+  
+  --color-bg: #E4E3E0;
+  --color-ink: #141414;
+  --color-grid: #141414;
+  --color-accent: #DCDAD7;
+  --color-main: #F2F1EF;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-ink font-sans;
+  }
+}
+
+.font-serif-italic {
+  font-family: var(--font-serif-italic);
+  font-style: italic;
+}
+
+.stat-box {
+  @apply border-b border-r border-grid p-4;
+}
+
+.row-hover {
+  @apply transition-colors duration-150 cursor-pointer;
+}
+
+.row-hover:hover {
+  @apply bg-ink text-bg;
+}
+
+/* Custom scrollbar to match theme */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "ResumeSniper",
+  "description": "AI-powered remote job matcher and tailored resume generator. Scrubs job boards, matches your resume, and creates custom PDFs using Gemini and PostgreSQL.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

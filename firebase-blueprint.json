@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user resume data and parsing history",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "resume_raw": { "type": "string" },
+        "resume_parsed": { "type": "object" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "resume_raw", "updated_at"]
+    },
+    "Job": {
+      "title": "Job Posting",
+      "description": "Scrubbed job opportunities",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "title": { "type": "string" },
+        "company": { "type": "string" },
+        "description": { "type": "string" },
+        "location": { "type": "string" },
+        "url": { "type": "string" },
+        "source": { "type": "string" },
+        "is_remote": { "type": "boolean" },
+        "score": { "type": "number" },
+        "reasoning": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "company", "description", "created_at"]
+    },
+    "ApplicationDocument": {
+      "title": "Tailored Document",
+      "description": "Version controlled tailored resume and cover letter",
+      "type": "object",
+      "properties": {
+        "user_email": { "type": "string", "format": "email" },
+        "job_id": { "type": "number" },
+        "title": { "type": "string" },
+        "company": { "type": "string" },
+        "resume_text": { "type": "string" },
+        "cover_letter_text": { "type": "string" },
+        "metadata": { "type": "object" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_email", "job_id", "resume_text", "cover_letter_text", "created_at"]
+    }
+  },
+  "firestore": {
+    "/users/{email}": {
+      "schema": "UserProfile",
+      "description": "User profiles indexed by email"
+    },
+    "/jobs/{jobId}": {
+      "schema": "Job",
+      "description": "Collection of all scrubbed jobs"
+    },
+    "/documents/{docId}": {
+      "schema": "ApplicationDocument",
+      "description": "History of tailored application packages"
+    }
+  }
+}

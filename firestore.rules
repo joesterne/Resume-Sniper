@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(email) {
+      return isSignedIn() && request.auth.token.email == email && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // --- Collections ---
+
+    // Users
+    match /users/{email} {
+      allow read: if isOwner(email);
+      allow write: if isOwner(email) && 
+        incoming().email == email &&
+        incoming().resume_raw is string &&
+        incoming().updated_at == request.time;
+    }
+
+    // Jobs (Shared read, Admin write - though here we act as "system")
+    match /jobs/{jobId} {
+      // For this app, we allow signed in users to read jobs
+      allow read: if isSignedIn();
+      // System/Server logic usually uses Admin SDK bypassing rules, 
+      // but if client writes:
+      allow create: if isSignedIn() && 
+        incoming().title is string && 
+        incoming().company is string;
+    }
+
+    // Documents (Versioning)
+    match /documents/{docId} {
+      allow read: if isSignedIn() && resource.data.user_email == request.auth.token.email;
+      allow create: if isSignedIn() && 
+        incoming().user_email == request.auth.token.email &&
+        incoming().created_at == request.time;
+    }
+  }
+}
