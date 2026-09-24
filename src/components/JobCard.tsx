@@ -67,9 +67,35 @@ function HighlightedDescription({ text, keywords }: { text: string, keywords?: s
   );
 }
 
+function formatJobDate(dateVal?: any): string | null {
+  if (!dateVal) return null;
+  try {
+    let date: Date;
+    if (typeof dateVal === 'object') {
+      const sec = dateVal._seconds || dateVal.seconds;
+      if (typeof sec === 'number') {
+        date = new Date(sec * 1000);
+      } else if (typeof dateVal.toDate === 'function') {
+        date = dateVal.toDate();
+      } else {
+        return null;
+      }
+    } else if (typeof dateVal === 'number') {
+      date = new Date(dateVal);
+    } else {
+      date = new Date(dateVal);
+    }
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString().split('T')[0];
+  } catch {
+    return null;
+  }
+}
+
 export function JobCard({ job, userSkills, onApply, onDelete }: JobCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const formattedDate = formatJobDate(job.created_at);
 
   return (
     <div 
@@ -98,6 +124,11 @@ export function JobCard({ job, userSkills, onApply, onDelete }: JobCardProps) {
             {job.is_remote && (
               <span className="text-green-600 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1">
                 <div className="w-1 h-1 bg-green-600" /> Remote
+              </span>
+            )}
+            {formattedDate && (
+              <span className="text-[9px] uppercase tracking-wider opacity-40 font-mono">
+                Added: {formattedDate}
               </span>
             )}
             <div className="ml-auto text-ink/30 transition-transform duration-300" style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0)' }}>

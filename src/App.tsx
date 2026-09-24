@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Briefcase, 
   FileText, 
@@ -21,6 +21,7 @@ import { Job, UserProfile, DocumentVersion, TailoredResult } from './types';
 // Components
 import { NavItem } from './components/NavItem';
 import { JobCard } from './components/JobCard';
+import { JobFilterBar, SortByOption, SortOrderOption } from './components/JobFilterBar';
 import { TailoringModal } from './components/TailoringModal';
 import { ProfileEditor } from './components/ProfileEditor';
 import { ParsedResume } from './types';
@@ -33,6 +34,11 @@ export default function App() {
   const [history, setHistory] = useState<DocumentVersion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("");
+
+  // Filter & Sort State for Remote Jobs
+  const [sortBy, setSortBy] = useState<SortByOption>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrderOption>('desc');
+  const [companyFilter, setCompanyFilter] = useState('');
 
   // Tracking tailoring
   const [tailoringJob, setTailoringJob] = useState<Job | null>(null);
@@ -196,7 +202,9 @@ export default function App() {
           missingSkills: match.missingSkills
         } : j;
       });
-      setJobs(updatedJobs.sort((a, b) => (b.score || 0) - (a.score || 0)));
+      setJobs(updatedJobs);
+      setSortBy('score');
+      setSortOrder('desc');
       setStatus("Matching complete!");
     } catch (e) {
       console.error(e);
@@ -337,6 +345,68 @@ export default function App() {
     }
   };
 
+  // Helper to extract timestamp from job created_at
+  const getJobTimestamp = (job: Job): number => {
+    if (!job.created_at) return 0;
+    if (typeof job.created_at === 'number') return job.created_at;
+    if (typeof job.created_at === 'string') {
+      const t = new Date(job.created_at).getTime();
+      return isNaN(t) ? 0 : t;
+    }
+    if (typeof job.created_at === 'object') {
+      const sec = job.created_at._seconds || job.created_at.seconds;
+      if (typeof sec === 'number') return sec * 1000;
+      if (typeof job.created_at.toDate === 'function') {
+        return job.created_at.toDate().getTime();
+      }
+    }
+    return 0;
+  };
+
+  // Available unique companies for quick suggestions and count
+  const availableCompanies = useMemo(() => {
+    const set = new Set<string>();
+    jobs.forEach(j => {
+      if (j.company && j.company.trim()) {
+        set.add(j.company.trim());
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [jobs]);
+
+  // Filtered and sorted jobs for display in Remote Jobs tab
+  const filteredAndSortedJobs = useMemo(() => {
+    let list = [...jobs];
+
+    // Filter by company name (case-insensitive substring match)
+    if (companyFilter.trim()) {
+      const query = companyFilter.trim().toLowerCase();
+      list = list.filter(j => j.company && j.company.toLowerCase().includes(query));
+    }
+
+    // Sort by Date Added or Match Score
+    list.sort((a, b) => {
+      if (sortBy === 'date') {
+        const timeA = getJobTimestamp(a);
+        const timeB = getJobTimestamp(b);
+        if (timeA === timeB) {
+          return String(b.id).localeCompare(String(a.id));
+        }
+        return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+      } else {
+        // sortBy === 'score'
+        const scoreA = a.score !== undefined ? a.score : -1;
+        const scoreB = b.score !== undefined ? b.score : -1;
+        if (scoreA === scoreB) {
+          return getJobTimestamp(b) - getJobTimestamp(a);
+        }
+        return sortOrder === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+      }
+    });
+
+    return list;
+  }, [jobs, companyFilter, sortBy, sortOrder]);
+
   return (
     <div className="flex h-screen bg-bg text-ink font-sans selection:bg-ink selection:text-bg overflow-hidden">
       {/* Sidebar */}
@@ -450,17 +520,61 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-1 divide-y border border-grid">
-                {jobs.map(job => (
-                  <JobCard 
-                    key={job.id} 
-                    job={job} 
-                    onApply={() => startTailoring(job)} 
-                    onDelete={() => handleDeleteJob(job.id)} 
-                    userSkills={profile?.resume_parsed?.skills} 
-                  />
-                ))}
-              </div>
+              {/* Filter Bar for Remote Jobs */}
+              {jobs.length > 0 && (
+                <JobFilterBar
+                  companyFilter={companyFilter}
+                  onCompanyFilterChange={setCompanyFilter}
+                  sortBy={sortBy}
+                  onSortByChange={setSortBy}
+                  sortOrder={sortOrder}
+                  onSortOrderChange={setSortOrder}
+                  totalJobs={jobs.length}
+                  filteredJobsCount={filteredAndSortedJobs.length}
+                  availableCompanies={availableCompanies}
+                  onResetFilters={() => {
+                    setCompanyFilter('');
+                    setSortBy('date');
+                    setSortOrder('desc');
+                  }}
+                />
+              )}
+
+              {/* Jobs List */}
+              {filteredAndSortedJobs.length > 0 ? (
+                <div className="grid grid-cols-1 divide-y border border-grid">
+                  {filteredAndSortedJobs.map(job => (
+                    <JobCard 
+                      key={job.id} 
+                      job={job} 
+                      onApply={() => startTailoring(job)} 
+                      onDelete={() => handleDeleteJob(job.id)} 
+                      userSkills={profile?.resume_parsed?.skills} 
+                    />
+                  ))}
+                </div>
+              ) : jobs.length > 0 ? (
+                <div className="p-12 border border-dashed border-grid bg-bg/10 text-center font-mono">
+                  <p className="text-[12px] uppercase font-bold tracking-widest mb-2 opacity-70">
+                    No jobs found matching company "{companyFilter.trim().toUpperCase()}"
+                  </p>
+                  <p className="text-[10px] opacity-50 mb-4">
+                    Try adjusting your search query or clear the filter to view all {jobs.length} available opportunities.
+                  </p>
+                  <button
+                    onClick={() => setCompanyFilter('')}
+                    className="px-4 py-2 border border-grid text-[10px] uppercase font-bold hover:bg-ink hover:text-bg transition-all"
+                  >
+                    Clear Company Filter
+                  </button>
+                </div>
+              ) : (
+                <div className="p-12 border border-dashed border-grid bg-bg/10 text-center font-mono">
+                  <p className="text-[11px] uppercase font-bold tracking-widest opacity-60">
+                    No active opportunities in database. Click "Scrub Web" to fetch jobs.
+                  </p>
+                </div>
+              )}
             </motion.div>
           )}
 

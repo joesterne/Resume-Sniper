@@ -11,7 +11,7 @@ export interface Job {
   reasoning?: string;
   matchedSkills?: string[];
   missingSkills?: string[];
-  created_at?: string;
+  created_at?: string | number | { _seconds?: number; seconds?: number; [key: string]: any } | any;
 }
 
 export interface ParsedResume {
