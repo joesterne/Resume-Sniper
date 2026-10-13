@@ -33,7 +33,7 @@
     },
     "ApplicationDocument": {
       "title": "Tailored Document",
-      "description": "Version controlled tailored resume and cover letter",
+      "description": "Version controlled tailored resume, cover letter, and application lifecycle stage",
       "type": "object",
       "properties": {
         "user_email": { "type": "string", "format": "email" },
@@ -43,7 +43,12 @@
         "resume_text": { "type": "string" },
         "cover_letter_text": { "type": "string" },
         "metadata": { "type": "object" },
-        "created_at": { "type": "string", "format": "date-time" }
+        "status": {
+          "type": "string",
+          "enum": ["draft", "applied", "interviewing", "offer", "rejected", "submitted"]
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["user_email", "job_id", "resume_text", "cover_letter_text", "created_at"]
     }

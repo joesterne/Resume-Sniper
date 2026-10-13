@@ -51,6 +51,10 @@ service cloud.firestore {
       allow create: if isSignedIn() && 
         incoming().user_email == request.auth.token.email &&
         incoming().created_at == request.time;
+      allow update: if isSignedIn() &&
+        resource.data.user_email == request.auth.token.email;
+      allow delete: if isSignedIn() &&
+        resource.data.user_email == request.auth.token.email;
     }
   }
 }

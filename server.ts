@@ -202,9 +202,10 @@ app.post('/api/tailor', async (req, res) => {
       resume_text,
       cover_letter_text,
       metadata,
+      status: 'draft',
       created_at: admin.firestore.FieldValue.serverTimestamp()
     });
-    res.json({ id: docRef.id });
+    res.json({ id: docRef.id, status: 'draft' });
   } catch (e) {
     res.status(500).json({ error: "Failed to save document" });
   }
@@ -224,23 +225,23 @@ app.post('/api/applications/submit', async (req, res) => {
       company: jobData.company || "Unknown Company",
       resume_text,
       cover_letter_text,
-      status: 'submitted',
+      status: 'applied',
       submitted_at: admin.firestore.FieldValue.serverTimestamp()
     });
     
     // Also save to documents ledger
-    await db.collection('documents').add({
+    const docRef = await db.collection('documents').add({
       user_email,
       job_id,
       title: jobData.title || jobData.company || "Unknown Position",
       company: jobData.company || "Unknown Company",
       resume_text,
       cover_letter_text,
-      status: 'submitted',
+      status: 'applied',
       created_at: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    res.json({ id: applicationRef.id, success: true, message: "Application submitted successfully." });
+    res.json({ id: applicationRef.id, doc_id: docRef.id, success: true, message: "Application submitted successfully." });
   } catch (e) {
     res.status(500).json({ error: "Failed to submit application" });
   }
@@ -256,6 +257,62 @@ app.get('/api/documents/:email', async (req, res) => {
     res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
   } catch (e) {
     res.json([]);
+  }
+});
+
+// Update Application / Document Status (Kanban drag-and-drop & stage updates)
+app.patch(['/api/documents/:id/status', '/api/documents/:id/status/'], async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (!status) {
+    return res.status(400).json({ error: "Missing status field" });
+  }
+  try {
+    const docRef = db.collection('documents').doc(id);
+    const docSnap = await docRef.get();
+    if (!docSnap.exists) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    await docRef.update({
+      status,
+      updated_at: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Also update any matching entry in applications collection
+    const docData = docSnap.data();
+    if (docData?.job_id && docData?.user_email) {
+      const appSnap = await db.collection('applications')
+        .where('user_email', '==', docData.user_email)
+        .where('job_id', '==', docData.job_id)
+        .get();
+      if (!appSnap.empty) {
+        const batch = db.batch();
+        appSnap.forEach(itemDoc => {
+          batch.update(itemDoc.ref, {
+            status,
+            updated_at: admin.firestore.FieldValue.serverTimestamp()
+          });
+        });
+        await batch.commit();
+      }
+    }
+
+    res.json({ success: true, id, status });
+  } catch (e: any) {
+    console.error("Error updating document status:", e);
+    res.status(500).json({ error: "Failed to update document status" });
+  }
+});
+
+// Delete Document from History
+app.delete('/api/documents/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.collection('documents').doc(id).delete();
+    res.json({ success: true, message: "Document deleted" });
+  } catch (e) {
+    res.status(500).json({ error: "Failed to delete document" });
   }
 });
 

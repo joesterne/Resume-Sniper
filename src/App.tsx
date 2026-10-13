@@ -7,6 +7,8 @@ import {
   AlertCircle,
   Loader2,
   ChevronRight,
+  Columns3,
+  Table,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -16,7 +18,7 @@ import { parseResume, searchRemoteJobs, matchJobs, tailorApplication } from './l
 import { USER_EMAIL } from './constants';
 
 // Types
-import { Job, UserProfile, DocumentVersion, TailoredResult } from './types';
+import { Job, UserProfile, DocumentVersion, TailoredResult, ApplicationStage } from './types';
 
 // Components
 import { NavItem } from './components/NavItem';
@@ -24,6 +26,8 @@ import { JobCard } from './components/JobCard';
 import { JobFilterBar, SortByOption, SortOrderOption } from './components/JobFilterBar';
 import { TailoringModal } from './components/TailoringModal';
 import { ProfileEditor } from './components/ProfileEditor';
+import { KanbanBoard } from './components/KanbanBoard';
+import { CareerVelocityCard } from './components/CareerVelocityCard';
 import { ParsedResume } from './types';
 
 export default function App() {
@@ -43,6 +47,9 @@ export default function App() {
   // Tracking tailoring
   const [tailoringJob, setTailoringJob] = useState<Job | null>(null);
   const [tailoredResult, setTailoredResult] = useState<TailoredResult | null>(null);
+
+  // History View Mode (Kanban vs Table)
+  const [historyView, setHistoryView] = useState<'kanban' | 'table'>('kanban');
 
   // LinkedIn Auth Listener
   useEffect(() => {
@@ -320,6 +327,44 @@ export default function App() {
     }
   };
 
+  const handleUpdateApplicationStatus = async (docId: string | number, newStatus: ApplicationStage) => {
+    // Optimistically update status in local state so UI updates instantaneously
+    setHistory(prev => prev.map(item => item.id === docId ? { ...item, status: newStatus } : item));
+    setStatus(`Updated stage to ${newStatus.toUpperCase()}`);
+    setTimeout(() => setStatus(""), 2000);
+
+    try {
+      const res = await fetch(`/api/documents/${docId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) throw new Error("Failed to update status on server");
+    } catch (e) {
+      console.error("Failed to update application status:", e);
+      setStatus("Failed to persist stage change");
+      fetchHistory(); // Revert to database state on failure
+    }
+  };
+
+  const handleDeleteHistoryItem = async (docId: string | number) => {
+    setIsLoading(true);
+    setStatus("Removing application record...");
+    try {
+      const res = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setHistory(prev => prev.filter(item => item.id !== docId));
+        setStatus("Application removed from ledger.");
+        setTimeout(() => setStatus(""), 2500);
+      }
+    } catch (e) {
+      console.error("Failed to delete history item:", e);
+      setStatus("Failed to delete record");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSaveProfile = async (parsedData: ParsedResume) => {
     setIsLoading(true);
     setStatus("Syncing profile updates...");
@@ -489,7 +534,7 @@ export default function App() {
               {activeTab === 'history' && "03 // Application Ledger"}
             </h2>
             
-            <div className="flex space-x-3">
+            <div className="flex space-x-3 items-center">
                {activeTab === 'jobs' && profile && (
                   <>
                     <button onClick={handleTriggerAlerts} className="px-4 py-2 border border-grid text-ink bg-accent/20 text-[10px] uppercase font-bold hover:bg-accent/40 transition-all flex items-center gap-2">
@@ -498,6 +543,35 @@ export default function App() {
                     <button onClick={handleScrubJobs} className="px-4 py-2 bg-ink text-bg text-[10px] uppercase font-bold hover:opacity-90 transition-opacity">Scrub Web</button>
                     <button onClick={handleRunMatching} className="px-4 py-2 border border-grid text-[10px] uppercase font-bold hover:bg-ink hover:text-bg transition-all">Analyze Fit</button>
                   </>
+               )}
+
+               {activeTab === 'history' && (
+                 <div className="flex items-center border border-grid bg-bg p-0.5 shadow-sm">
+                   <button
+                     onClick={() => setHistoryView('kanban')}
+                     className={`px-3 py-1.5 text-[10px] uppercase font-bold tracking-wider transition-all flex items-center gap-1.5 ${
+                       historyView === 'kanban' 
+                         ? 'bg-ink text-bg shadow-sm' 
+                         : 'text-ink hover:bg-black/5 opacity-70 hover:opacity-100'
+                     }`}
+                     title="Kanban Board View with Drag and Drop"
+                   >
+                     <Columns3 size={12} />
+                     <span>Kanban Board</span>
+                   </button>
+                   <button
+                     onClick={() => setHistoryView('table')}
+                     className={`px-3 py-1.5 text-[10px] uppercase font-bold tracking-wider transition-all flex items-center gap-1.5 ${
+                       historyView === 'table' 
+                         ? 'bg-ink text-bg shadow-sm' 
+                         : 'text-ink hover:bg-black/5 opacity-70 hover:opacity-100'
+                     }`}
+                     title="Table Ledger View"
+                   >
+                     <Table size={12} />
+                     <span>Table Ledger</span>
+                   </button>
+                 </div>
                )}
             </div>
           </header>
@@ -670,40 +744,85 @@ export default function App() {
           )}
 
           {activeTab === 'history' && (
-            <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div className="border border-grid overflow-hidden shadow-[4px_4px_0px_#141414]">
-                <table className="w-full text-left bg-white font-mono text-[11px]">
-                  <thead>
-                    <tr className="border-b border-grid bg-bg uppercase font-bold text-[10px]">
-                      <th className="px-6 py-3">Log_Company</th>
-                      <th className="px-6 py-3">Log_Position</th>
-                      <th className="px-6 py-3 text-center">Log_Date</th>
-                      <th className="px-6 py-3 text-center">Log_Status</th>
-                      <th className="px-6 py-3 text-right">Log_Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-grid">
-                    {history.map(item => (
-                      <tr key={item.id} className="row-hover">
-                        <td className="px-6 py-4 font-bold">{item.company.toUpperCase()}</td>
-                        <td className="px-6 py-4 opacity-80">{item.title}</td>
-                        <td className="px-6 py-4 text-center opacity-60">{new Date(item.created_at).toISOString().split('T')[0]}</td>
-                        <td className="px-6 py-4 text-center">
-                          {item.status === 'submitted' ? (
-                            <span className="px-2 py-1 bg-green-100 text-green-800 text-[9px] uppercase font-bold tracking-widest border border-green-200">Submitted</span>
-                          ) : (
-                            <span className="px-2 py-1 bg-accent/20 text-ink/60 text-[9px] uppercase font-bold tracking-widest border border-grid/20">Drafted</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <a href={`/api/documents/${item.id}/pdf`} className="inline-flex items-center space-x-2 border border-current px-3 py-1 font-bold uppercase hover:bg-ink hover:text-bg transition-colors"><Download size={10} /><span>Retrieve_PDF</span></a>
-                        </td>
+            <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-8">
+              {/* Career Velocity Dashboard Card */}
+              <CareerVelocityCard history={history} />
+
+              {history.length === 0 ? (
+                <div className="p-16 border-2 border-dashed border-grid bg-bg/10 text-center font-mono max-w-2xl mx-auto">
+                  <div className="w-12 h-12 bg-ink text-bg flex items-center justify-center mx-auto mb-4 font-bold text-sm">
+                    03
+                  </div>
+                  <h3 className="text-sm font-bold uppercase tracking-widest mb-2">Application Ledger Empty</h3>
+                  <p className="text-xs text-ink/60 mb-6 leading-relaxed">
+                    No tailored applications or job records found. Tailor a resume or submit an application from the Remote Jobs console to populate your Kanban pipeline.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab('jobs')}
+                    className="px-6 py-2.5 bg-ink text-bg text-[10px] uppercase font-bold tracking-wider hover:opacity-90 transition-opacity inline-flex items-center gap-2"
+                  >
+                    <span>Explore Remote Jobs</span>
+                    <ChevronRight size={12} />
+                  </button>
+                </div>
+              ) : historyView === 'kanban' ? (
+                <KanbanBoard 
+                  items={history} 
+                  onStatusChange={handleUpdateApplicationStatus}
+                  onDelete={handleDeleteHistoryItem}
+                  isUpdating={isLoading}
+                />
+              ) : (
+                <div className="border border-grid overflow-hidden shadow-[4px_4px_0px_#141414]">
+                  <table className="w-full text-left bg-white font-mono text-[11px]">
+                    <thead>
+                      <tr className="border-b border-grid bg-bg uppercase font-bold text-[10px]">
+                        <th className="px-6 py-3">Log_Company</th>
+                        <th className="px-6 py-3">Log_Position</th>
+                        <th className="px-6 py-3 text-center">Log_Date</th>
+                        <th className="px-6 py-3 text-center">Log_Status</th>
+                        <th className="px-6 py-3 text-right">Log_Action</th>
                       </tr>
-                    ))}
-                    {history.length === 0 && <tr><td colSpan={5} className="px-8 py-20 text-center opacity-40 italic">Document ledger is empty.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-grid">
+                      {history.map(item => {
+                        const statusStr = item.status ? String(item.status).toLowerCase() : 'draft';
+                        const badgeColor = 
+                          statusStr === 'offer' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                          statusStr === 'interviewing' ? 'bg-amber-100 text-amber-800 border-amber-300' :
+                          statusStr === 'applied' || statusStr === 'submitted' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                          statusStr === 'rejected' ? 'bg-rose-100 text-rose-800 border-rose-300' :
+                          'bg-accent/30 text-ink/70 border-grid/20';
+
+                        return (
+                          <tr key={item.id} className="row-hover">
+                            <td className="px-6 py-4 font-bold">{item.company.toUpperCase()}</td>
+                            <td className="px-6 py-4 opacity-80">{item.title}</td>
+                            <td className="px-6 py-4 text-center opacity-60">
+                              {item.created_at ? (typeof item.created_at === 'string' ? item.created_at.split('T')[0] : 'RECENT') : 'RECENT'}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <span className={`px-2 py-1 text-[9px] uppercase font-bold tracking-widest border ${badgeColor}`}>
+                                {statusStr.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right space-x-2">
+                              <a 
+                                href={`/api/documents/${item.id}/pdf`} 
+                                download 
+                                className="inline-flex items-center space-x-2 border border-current px-3 py-1 font-bold uppercase hover:bg-ink hover:text-bg transition-colors"
+                              >
+                                <Download size={10} />
+                                <span>Retrieve_PDF</span>
+                              </a>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

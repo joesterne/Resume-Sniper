@@ -42,6 +42,8 @@ export interface UserProfile {
   updated_at?: string;
 }
 
+export type ApplicationStage = 'draft' | 'applied' | 'interviewing' | 'offer' | 'rejected';
+
 export interface DocumentVersion {
   id: string | number;
   job_id: string | number;
@@ -51,7 +53,8 @@ export interface DocumentVersion {
   resume_text?: string;
   cover_letter_text?: string;
   metadata?: any;
-  status?: string;
+  status?: ApplicationStage | string;
+  updated_at?: string;
 }
 
 export interface TailoredResult {
