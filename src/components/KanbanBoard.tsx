@@ -1,20 +1,15 @@
 import React, { useState } from 'react';
-import { 
-  Download, 
-  Trash2, 
-  GripVertical, 
-  Search, 
-  X, 
-  ExternalLink,
-  ChevronDown,
-  Sparkles,
-  FileText,
-  Clock,
-  ArrowRight,
-  Filter
+import {
+  Download,
+  Trash2,
+  GripVertical,
+  Search,
+  X,
+  FileText
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DocumentVersion, ApplicationStage } from '../types';
+import { formatTimestampDate } from '../lib/dates';
 
 export interface KanbanBoardProps {
   items: DocumentVersion[];
@@ -100,24 +95,8 @@ export function normalizeApplicationStage(status?: string): ApplicationStage {
 
 function formatDate(val: any): string {
   if (!val) return 'RECENT';
-  try {
-    if (typeof val === 'string') {
-      const d = new Date(val);
-      if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-    }
-    if (typeof val === 'object') {
-      const sec = val._seconds || val.seconds;
-      if (typeof sec === 'number') {
-        return new Date(sec * 1000).toISOString().split('T')[0];
-      }
-      if (typeof val.toDate === 'function') {
-        return val.toDate().toISOString().split('T')[0];
-      }
-    }
-    return String(val).slice(0, 10);
-  } catch {
-    return 'RECENT';
-  }
+  // Shared parser (src/lib/dates) — this was one of four divergent copies.
+  return formatTimestampDate(val) ?? String(val).slice(0, 10);
 }
 
 export function KanbanBoard({ items, onStatusChange, onDelete, isUpdating }: KanbanBoardProps) {
@@ -146,12 +125,9 @@ export function KanbanBoard({ items, onStatusChange, onDelete, isUpdating }: Kan
   };
 
   filteredItems.forEach(item => {
-    const stage = normalizeApplicationStage(item.status);
-    if (stageMap[stage]) {
-      stageMap[stage].push(item);
-    } else {
-      stageMap.applied.push(item);
-    }
+    // normalizeApplicationStage always returns one of the five stageMap keys,
+    // so the old else-fallback branch could never execute.
+    stageMap[normalizeApplicationStage(item.status)].push(item);
   });
 
   const handleDragStart = (e: React.DragEvent, item: DocumentVersion) => {
@@ -217,11 +193,23 @@ export function KanbanBoard({ items, onStatusChange, onDelete, isUpdating }: Kan
     await onStatusChange(itemId, targetStage);
   };
 
-  // Metrics summary
+  // Metrics summary — computed from ALL items, not the search-filtered
+  // stageMap: typing a search used to shrink Active/Interviews/Offers while
+  // Total stayed full.
+  const allStageMap: Record<ApplicationStage, DocumentVersion[]> = {
+    draft: [],
+    applied: [],
+    interviewing: [],
+    offer: [],
+    rejected: []
+  };
+  items.forEach(item => {
+    allStageMap[normalizeApplicationStage(item.status)].push(item);
+  });
   const totalCount = items.length;
-  const activeCount = stageMap.applied.length + stageMap.interviewing.length;
-  const offersCount = stageMap.offer.length;
-  const interviewCount = stageMap.interviewing.length;
+  const activeCount = allStageMap.applied.length + allStageMap.interviewing.length;
+  const offersCount = allStageMap.offer.length;
+  const interviewCount = allStageMap.interviewing.length;
 
   return (
     <div className="space-y-6">

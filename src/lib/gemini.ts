@@ -1,5 +1,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
+// SERVER-ONLY module: the API key must never reach the browser. The client
+// calls these through the /api/ai endpoints (see src/lib/aiClient.ts); this
+// file used to be imported by client code with the key inlined into the
+// bundle by vite.config's define.
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 export async function parseResume(text: string) {
@@ -122,6 +126,10 @@ export async function tailorApplication(resumeRaw: string, jobDescription: strin
 }
 
 export async function searchRemoteJobs(query: string) {
+  // NOTE: despite the name, this does not search any job board — it asks the
+  // model to invent sample postings. Results are flagged ai_generated so the
+  // UI and the alert emails can label them as samples instead of presenting
+  // them as live listings with (model-invented) apply links.
   const result = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: `Find 5 sample remote job postings for "${query}" from varied sources. Return a list of JSON objects with title, company, description, location (Remote), url, source, and is_remote (true).`,
@@ -144,5 +152,6 @@ export async function searchRemoteJobs(query: string) {
       }
     }
   });
-  return JSON.parse(result.text);
+  const jobs = JSON.parse(result.text);
+  return Array.isArray(jobs) ? jobs.map((j: any) => ({ ...j, ai_generated: true })) : jobs;
 }

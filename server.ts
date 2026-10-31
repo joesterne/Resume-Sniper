@@ -10,7 +10,7 @@ import * as dotenv from 'dotenv';
 import axios from 'axios';
 import cron from 'node-cron';
 import nodemailer from 'nodemailer';
-import { searchRemoteJobs, matchJobs } from './src/lib/gemini';
+import { parseResume, searchRemoteJobs, matchJobs, tailorApplication } from './src/lib/gemini';
 
 dotenv.config();
 
@@ -31,7 +31,7 @@ try {
 }
 
 const app = express();
-const port = 3000;
+const port = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -41,6 +41,17 @@ const LINKEDIN_CLIENT_ID = process.env.LINKEDIN_CLIENT_ID;
 const LINKEDIN_CLIENT_SECRET = process.env.LINKEDIN_CLIENT_SECRET;
 
 // API Routes
+//
+// SECURITY NOTE: the profile/jobs/documents routes below are keyed by a
+// client-supplied email with no authentication — the app has no sign-in
+// system at all (the declared firebase client SDK is never imported, and
+// LinkedIn OAuth only imports a profile). Anyone who knows an email can
+// read or modify that user's data. Closing this needs a real auth layer
+// (e.g. Firebase Auth sign-in on the client + ID-token verification here);
+// that is an architecture change, deliberately not bolted on in a lint pass.
+// What this pass did close: the admin trigger requires ADMIN_TOKEN, the
+// LinkedIn flow validates OAuth state, and the Gemini key no longer ships
+// to the browser (see /api/ai below).
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
@@ -53,21 +64,33 @@ app.get('/api/auth/linkedin/url', (req, res) => {
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.headers['x-forwarded-host'] || req.get('host');
   const redirectUri = `${protocol}://${host}/api/auth/linkedin/callback`;
-  
+
+  // OAuth state, validated in the callback (login CSRF): the flow previously
+  // sent no state at all. Stored in a short-lived httpOnly cookie.
+  const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  res.setHeader('Set-Cookie', `li_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`);
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: LINKEDIN_CLIENT_ID,
     redirect_uri: redirectUri,
     scope: 'openid profile email',
+    state,
   });
   const url = `https://www.linkedin.com/oauth/v2/authorization?${params.toString()}`;
   res.json({ url });
 });
 
 app.get(['/api/auth/linkedin/callback', '/api/auth/linkedin/callback/'], async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   if (!code) {
     return res.send(`<html><body><script>window.close();</script></body></html>`);
+  }
+  const stateCookie = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('li_oauth_state='));
+  const expectedState = stateCookie ? stateCookie.slice('li_oauth_state='.length) : null;
+  res.setHeader('Set-Cookie', 'li_oauth_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+  if (!expectedState || !state || state !== expectedState) {
+    return res.status(400).send("OAuth state mismatch — please restart the LinkedIn sign-in.");
   }
 
   try {
@@ -96,17 +119,20 @@ app.get(['/api/auth/linkedin/callback', '/api/auth/linkedin/callback/'], async (
     const userInfo = profileResponse.data;
 
     // Here we would typically sync with our user profile
-    // For now, we'll just pass it back in the script so the frontend can receive it
+    // For now, we'll just pass it back in the script so the frontend can receive it.
+    // Target origin is this app's own origin, never '*': the payload carries
+    // the user's LinkedIn profile, and '*' hands it to whatever site happens
+    // to be the opener.
     res.send(`
       <html>
         <body>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ 
-                type: 'OAUTH_AUTH_SUCCESS', 
+              window.opener.postMessage({
+                type: 'OAUTH_AUTH_SUCCESS',
                 source: 'linkedin',
                 profile: ${JSON.stringify(userInfo)}
-              }, '*');
+              }, '${protocol}://${host}');
               window.close();
             } else {
               window.location.href = '/';
@@ -155,7 +181,49 @@ app.get('/api/jobs', async (req, res) => {
     const snapshot = await db.collection('jobs').orderBy('created_at', 'desc').get();
     res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
   } catch (e) {
-    res.json([]);
+    // Was `res.json([])`: a Firestore outage looked exactly like "no jobs".
+    console.error("Failed to fetch jobs:", e);
+    res.status(500).json({ error: "Failed to fetch jobs" });
+  }
+});
+
+// AI endpoints — the Gemini key lives only on the server. The browser used
+// to import src/lib/gemini directly while vite.config inlined the key into
+// the client bundle, so every visitor could extract and abuse it. The client
+// now calls these via src/lib/aiClient.ts.
+app.post('/api/ai/parse', async (req, res) => {
+  try {
+    res.json(await parseResume(req.body.text));
+  } catch (e) {
+    console.error("AI parse failed:", e);
+    res.status(500).json({ error: "AI parse failed" });
+  }
+});
+
+app.post('/api/ai/search', async (req, res) => {
+  try {
+    res.json(await searchRemoteJobs(req.body.query));
+  } catch (e) {
+    console.error("AI job search failed:", e);
+    res.status(500).json({ error: "AI job search failed" });
+  }
+});
+
+app.post('/api/ai/match', async (req, res) => {
+  try {
+    res.json(await matchJobs(req.body.resumeParsed, req.body.jobDescriptions));
+  } catch (e) {
+    console.error("AI matching failed:", e);
+    res.status(500).json({ error: "AI matching failed" });
+  }
+});
+
+app.post('/api/ai/tailor', async (req, res) => {
+  try {
+    res.json(await tailorApplication(req.body.resumeRaw, req.body.jobDescription));
+  } catch (e) {
+    console.error("AI tailoring failed:", e);
+    res.status(500).json({ error: "AI tailoring failed" });
   }
 });
 
@@ -256,7 +324,9 @@ app.get('/api/documents/:email', async (req, res) => {
       .get();
     res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
   } catch (e) {
-    res.json([]);
+    // Was `res.json([])`: a Firestore outage looked exactly like "no history".
+    console.error("Failed to fetch documents:", e);
+    res.status(500).json({ error: "Failed to fetch documents" });
   }
 });
 
@@ -397,7 +467,11 @@ async function runJobAlerts() {
         console.log(`[Job Alerts] Found ${highMatches.length} high-match jobs for ${email}. Sending email...`);
         
         let htmlBody = `<h2 style="font-family: sans-serif;">New High-Match Opportunities</h2>`;
-        htmlBody += `<p style="font-family: sans-serif;">We found ${highMatches.length} new jobs that strongly match your resume:</p><ul>`;
+        htmlBody += `<p style="font-family: sans-serif;">We found ${highMatches.length} new jobs that strongly match your resume:</p>`;
+        // Honesty: these listings are AI-generated samples, not scraped live
+        // postings (see searchRemoteJobs) — recipients must be told, since
+        // the apply links are model-invented too.
+        htmlBody += `<p style="font-family: sans-serif; color: #b45309;"><strong>Note:</strong> these listings were generated by AI as samples and may not be real postings — verify each one before applying.</p><ul>`;
         
         highMatches.forEach((match: any) => {
           htmlBody += `
@@ -438,11 +512,18 @@ cron.schedule('0 */12 * * *', () => {
   runJobAlerts();
 });
 
-// Endpoint to trigger manually
+// Endpoint to trigger manually. Requires the ADMIN_TOKEN env var: this used
+// to be an open endpoint that ran the full Gemini matching routine and sent
+// email for every user in the database — an unauthenticated cost and spam
+// trigger. (The browser's manual-trigger button can no longer fire it; the
+// 12-hour cron is the supported path, or call with the x-admin-token header.)
 app.post('/api/admin/trigger-alerts', async (req, res) => {
-  // Normally you'd secure this with an admin token
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.get('x-admin-token') !== adminToken) {
+    return res.status(401).json({ error: "Admin token required" });
+  }
   runJobAlerts(); // run async
-  res.json({ message: "Job alert routine dispatched securely to the background." });
+  res.json({ message: "Job alert routine dispatched to the background." });
 });
 
 // Start the server

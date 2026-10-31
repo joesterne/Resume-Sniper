@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { 
   TrendingUp, 
   Calendar, 
@@ -19,10 +19,10 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
-  ReferenceLine
+  Tooltip
 } from 'recharts';
 import { DocumentVersion } from '../types';
+import { timestampMs } from '../lib/dates';
 
 interface CareerVelocityCardProps {
   history: DocumentVersion[];
@@ -40,27 +40,6 @@ interface VelocityDataPoint {
   offers: number;
 }
 
-// Helper to reliably parse timestamp into ms
-function getTimestampMs(val: any): number {
-  if (!val) return Date.now();
-  if (typeof val === 'number') return val;
-  if (typeof val === 'string') {
-    const t = new Date(val).getTime();
-    return isNaN(t) ? Date.now() : t;
-  }
-  if (typeof val === 'object') {
-    const sec = val._seconds || val.seconds;
-    if (typeof sec === 'number') return sec * 1000;
-    if (typeof val.toDate === 'function') {
-      try {
-        return val.toDate().getTime();
-      } catch {
-        return Date.now();
-      }
-    }
-  }
-  return Date.now();
-}
 
 function formatDayLabel(dateStr: string): string {
   try {
@@ -89,7 +68,7 @@ export function CareerVelocityCard({ history }: CareerVelocityCardProps) {
 
     // Map all history items to date keys
     const itemsWithDates = history.map(item => {
-      const ms = getTimestampMs(item.created_at);
+      const ms = timestampMs(item.created_at, Date.now());
       const d = new Date(ms);
       const dateKey = d.toISOString().split('T')[0];
       const status = (item.status || 'draft').toLowerCase();
@@ -97,7 +76,6 @@ export function CareerVelocityCard({ history }: CareerVelocityCardProps) {
         ...item,
         timestampMs: ms,
         dateKey,
-        isAppliedOrBeyond: status !== 'draft',
         isInterviewing: status === 'interviewing',
         isOffer: status === 'offer',
       };

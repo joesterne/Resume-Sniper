@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Briefcase, 
   FileText, 
@@ -14,7 +14,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
 
 // Config & Services
-import { parseResume, searchRemoteJobs, matchJobs, tailorApplication } from './lib/gemini';
+import { parseResume, searchRemoteJobs, matchJobs, tailorApplication } from './lib/aiClient';
+import { timestampMs } from './lib/dates';
 import { USER_EMAIL } from './constants';
 
 // Types
@@ -54,8 +55,10 @@ export default function App() {
   // LinkedIn Auth Listener
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) return;
+      // Exact origin match only: the old check trusted any origin containing
+      // 'localhost' (e.g. https://localhost.evil.com) or ending in .run.app
+      // to inject a profile import. The OAuth callback is same-origin.
+      if (event.origin !== window.location.origin) return;
 
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS' && event.data?.source === 'linkedin') {
         const { profile: linkedInProfile } = event.data;
@@ -69,7 +72,10 @@ export default function App() {
             
           // For now, let's just use the name and email directly if possible or mock the AI call with basic info
           const profileData: ParsedResume = {
-            name: linkedInProfile.name || linkedInProfile.given_name + " " + linkedInProfile.family_name,
+            // Was `name || given_name + " " + family_name`: + binds tighter
+            // than ||, so a profile with no name fields produced the literal
+            // string "undefined undefined".
+            name: linkedInProfile.name || [linkedInProfile.given_name, linkedInProfile.family_name].filter(Boolean).join(' ') || 'Unknown',
             contact: {
               email: linkedInProfile.email || "",
               phone: "", // LinkedIn basic profile doesn't provide phone
@@ -175,7 +181,9 @@ export default function App() {
 
   const handleScrubJobs = async () => {
     setIsLoading(true);
-    setStatus("Scrubbing job boards...");
+    // Honest labels: searchRemoteJobs generates AI sample postings, it does
+    // not scrape live job boards.
+    setStatus("Generating AI sample jobs...");
     try {
       const results = await searchRemoteJobs("Software Engineer Remote");
       await fetch('/api/jobs/bulk', {
@@ -184,10 +192,10 @@ export default function App() {
         body: JSON.stringify({ jobs: results })
       });
       await fetchJobs();
-      setStatus("Found new opportunities!");
+      setStatus("Added AI-generated sample jobs — verify listings before applying.");
     } catch (e) {
       console.error(e);
-      setStatus("Error scrubbing jobs");
+      setStatus("Error generating sample jobs");
     } finally {
       setIsLoading(false);
     }
@@ -225,7 +233,8 @@ export default function App() {
     setIsLoading(true);
     setStatus("Triggering background scan...");
     try {
-      await fetch('/api/admin/trigger-alerts', { method: 'POST' });
+      const res = await fetch('/api/admin/trigger-alerts', { method: 'POST' });
+      if (!res.ok) throw new Error(`Trigger rejected: ${res.status}`);
       setStatus("Alert scan dispatched.");
       // Just a little confetti to show the manual action was registered
       confetti({ particleCount: 30, spread: 30, origin: { y: 0.8 } });
@@ -238,11 +247,17 @@ export default function App() {
   };
 
   const startTailoring = async (job: Job) => {
+    // The jobs list renders whenever jobs exist, even with no profile loaded;
+    // this used to dereference profile! and die as a generic failure.
+    if (!profile) {
+      setStatus("Upload a resume first.");
+      return;
+    }
     setTailoringJob(job);
     setIsLoading(true);
     setStatus(`Tailoring for ${job.company}...`);
     try {
-      const result = await tailorApplication(profile!.resume_raw, job.description);
+      const result = await tailorApplication(profile.resume_raw, job.description);
       setTailoredResult(result);
       setStatus("AI generation complete.");
     } catch (e) {
@@ -274,7 +289,7 @@ export default function App() {
     setIsLoading(true);
     setStatus("Versioning documents...");
     try {
-      await fetch('/api/tailor', {
+      const res = await fetch('/api/tailor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -285,6 +300,9 @@ export default function App() {
           metadata: tailoredResult.metadata
         })
       });
+      // Was unchecked: a server 500 still fired confetti and discarded the
+      // modal, silently losing the documents.
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`);
       confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
       setStatus("Application documents versioned.");
       fetchHistory();
@@ -303,7 +321,7 @@ export default function App() {
     setIsLoading(true);
     setStatus("Submitting application...");
     try {
-      await fetch('/api/applications/submit', {
+      const res = await fetch('/api/applications/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -313,7 +331,9 @@ export default function App() {
           cover_letter_text: docs.coverLetter
         })
       });
-      
+      // Was unchecked: a server 500 still showed "submitted successfully".
+      if (!res.ok) throw new Error(`Submission failed: ${res.status}`);
+
       confetti({ particleCount: 150, zIndex: 9999, spread: 80, origin: { y: 0.6 } });
       setStatus("Application submitted successfully!");
       fetchHistory();
@@ -390,23 +410,9 @@ export default function App() {
     }
   };
 
-  // Helper to extract timestamp from job created_at
-  const getJobTimestamp = (job: Job): number => {
-    if (!job.created_at) return 0;
-    if (typeof job.created_at === 'number') return job.created_at;
-    if (typeof job.created_at === 'string') {
-      const t = new Date(job.created_at).getTime();
-      return isNaN(t) ? 0 : t;
-    }
-    if (typeof job.created_at === 'object') {
-      const sec = job.created_at._seconds || job.created_at.seconds;
-      if (typeof sec === 'number') return sec * 1000;
-      if (typeof job.created_at.toDate === 'function') {
-        return job.created_at.toDate().getTime();
-      }
-    }
-    return 0;
-  };
+  // Helper to extract timestamp from job created_at (shared parser —
+  // src/lib/dates; this used to be one of four divergent copies)
+  const getJobTimestamp = (job: Job): number => timestampMs(job.created_at, 0);
 
   // Available unique companies for quick suggestions and count
   const availableCompanies = useMemo(() => {
@@ -540,7 +546,7 @@ export default function App() {
                     <button onClick={handleTriggerAlerts} className="px-4 py-2 border border-grid text-ink bg-accent/20 text-[10px] uppercase font-bold hover:bg-accent/40 transition-all flex items-center gap-2">
                        Test Auto-Scraper
                     </button>
-                    <button onClick={handleScrubJobs} className="px-4 py-2 bg-ink text-bg text-[10px] uppercase font-bold hover:opacity-90 transition-opacity">Scrub Web</button>
+                    <button onClick={handleScrubJobs} className="px-4 py-2 bg-ink text-bg text-[10px] uppercase font-bold hover:opacity-90 transition-opacity">Find Sample Jobs</button>
                     <button onClick={handleRunMatching} className="px-4 py-2 border border-grid text-[10px] uppercase font-bold hover:bg-ink hover:text-bg transition-all">Analyze Fit</button>
                   </>
                )}
@@ -645,7 +651,7 @@ export default function App() {
               ) : (
                 <div className="p-12 border border-dashed border-grid bg-bg/10 text-center font-mono">
                   <p className="text-[11px] uppercase font-bold tracking-widest opacity-60">
-                    No active opportunities in database. Click "Scrub Web" to fetch jobs.
+                    No active opportunities in database. Click "Find Sample Jobs" to generate AI sample listings.
                   </p>
                 </div>
               )}

@@ -1,5 +1,4 @@
-import React from 'react';
-import { Search, ArrowUpDown, ArrowDown, ArrowUp, X, Filter, Calendar, Award, Building2 } from 'lucide-react';
+import { Search, ArrowUpDown, ArrowDown, ArrowUp, X, Calendar, Award, Building2 } from 'lucide-react';
 
 export type SortByOption = 'date' | 'score';
 export type SortOrderOption = 'desc' | 'asc';

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Plus, Trash2, Save, X } from 'lucide-react';
 import { ParsedResume } from '../types';
 
@@ -12,31 +12,34 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
   const [formData, setFormData] = useState<ParsedResume>(initialData);
   const [isSaving, setIsSaving] = useState(false);
 
+  // These handlers used to shallow-copy formData and then push/splice the
+  // SHARED arrays (and mutate shared entry objects in the field editors
+  // below), mutating React state — and App's profile object — outside
+  // setState. Every change now copies the array and the entry it touches.
   const handleAddField = (category: 'skills' | 'experience' | 'education') => {
-    const newData = { ...formData };
-    if (category === 'skills') newData.skills.push('');
+    if (category === 'skills') setFormData({ ...formData, skills: [...formData.skills, ''] });
     else if (category === 'experience') {
-      newData.experience.push({ title: '', company: '', date: '', bullets: [''] });
+      setFormData({ ...formData, experience: [...formData.experience, { title: '', company: '', date: '', bullets: [''] }] });
     } else if (category === 'education') {
-      newData.education.push({ degree: '', school: '', year: '' });
+      setFormData({ ...formData, education: [...formData.education, { degree: '', school: '', year: '' }] });
     }
-    setFormData(newData);
   };
 
   const handleRemoveField = (category: 'skills' | 'experience' | 'education', index: number) => {
-    const newData = { ...formData };
-    if (category === 'skills') newData.skills.splice(index, 1);
-    else if (category === 'experience') newData.experience.splice(index, 1);
-    else if (category === 'education') newData.education.splice(index, 1);
-    setFormData(newData);
+    if (category === 'skills') setFormData({ ...formData, skills: formData.skills.filter((_, i) => i !== index) });
+    else if (category === 'experience') setFormData({ ...formData, experience: formData.experience.filter((_, i) => i !== index) });
+    else if (category === 'education') setFormData({ ...formData, education: formData.education.filter((_, i) => i !== index) });
   };
 
   const handleExperienceBulletAction = (expIdx: number, type: 'add' | 'remove', bulletIdx?: number) => {
-    const newData = { ...formData };
-    const exp = newData.experience[expIdx];
-    if (type === 'add') exp.bullets.push('');
-    else if (type === 'remove' && bulletIdx !== undefined) exp.bullets.splice(bulletIdx, 1);
-    setFormData(newData);
+    const experience = formData.experience.map((exp, i) => {
+      if (i !== expIdx) return exp;
+      const bullets = type === 'add'
+        ? [...exp.bullets, '']
+        : exp.bullets.filter((_, b) => b !== bulletIdx);
+      return { ...exp, bullets };
+    });
+    setFormData({ ...formData, experience });
   };
 
   return (
@@ -158,7 +161,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                     value={exp.title}
                     onChange={e => {
                       const newExp = [...formData.experience];
-                      newExp[expIdx].title = e.target.value;
+                      newExp[expIdx] = { ...newExp[expIdx], title: e.target.value };
                       setFormData({...formData, experience: newExp});
                     }}
                     className="col-span-1 bg-accent/10 border-b border-grid p-1 font-bold uppercase outline-none focus:bg-white"
@@ -168,7 +171,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                     value={exp.company}
                     onChange={e => {
                       const newExp = [...formData.experience];
-                      newExp[expIdx].company = e.target.value;
+                      newExp[expIdx] = { ...newExp[expIdx], company: e.target.value };
                       setFormData({...formData, experience: newExp});
                     }}
                     className="col-span-1 bg-accent/10 border-b border-grid p-1 italic outline-none focus:bg-white"
@@ -178,7 +181,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                     value={exp.date}
                     onChange={e => {
                       const newExp = [...formData.experience];
-                      newExp[expIdx].date = e.target.value;
+                      newExp[expIdx] = { ...newExp[expIdx], date: e.target.value };
                       setFormData({...formData, experience: newExp});
                     }}
                     className="col-span-1 bg-accent/10 border-b border-grid p-1 text-right opacity-60 outline-none focus:bg-white"
@@ -197,7 +200,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                         value={bullet}
                         onChange={e => {
                           const newExp = [...formData.experience];
-                          newExp[expIdx].bullets[bIdx] = e.target.value;
+                          newExp[expIdx] = { ...newExp[expIdx], bullets: newExp[expIdx].bullets.map((b, i) => i === bIdx ? e.target.value : b) };
                           setFormData({...formData, experience: newExp});
                         }}
                         rows={1}
@@ -237,7 +240,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                   value={edu.degree}
                   onChange={e => {
                     const newEdu = [...formData.education];
-                    newEdu[idx].degree = e.target.value;
+                    newEdu[idx] = { ...newEdu[idx], degree: e.target.value };
                     setFormData({...formData, education: newEdu});
                   }}
                   className="w-full bg-transparent border-b border-grid/20 font-bold mb-2 outline-none focus:bg-white px-1"
@@ -247,7 +250,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                   value={edu.school}
                   onChange={e => {
                     const newEdu = [...formData.education];
-                    newEdu[idx].school = e.target.value;
+                    newEdu[idx] = { ...newEdu[idx], school: e.target.value };
                     setFormData({...formData, education: newEdu});
                   }}
                   className="w-full bg-transparent border-b border-grid/20 mb-2 underline outline-none focus:bg-white px-1"
@@ -257,7 +260,7 @@ export function ProfileEditor({ initialData, onSave, onCancel }: ProfileEditorPr
                    value={edu.year}
                    onChange={e => {
                      const newEdu = [...formData.education];
-                     newEdu[idx].year = e.target.value;
+                     newEdu[idx] = { ...newEdu[idx], year: e.target.value };
                      setFormData({...formData, education: newEdu});
                    }}
                    className="w-full bg-transparent opacity-60 outline-none focus:bg-white px-1"

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatTimestampDate } from '../lib/dates';
 import { ExternalLink, ChevronRight, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job } from '../types';
@@ -68,28 +69,8 @@ function HighlightedDescription({ text, keywords }: { text: string, keywords?: s
 }
 
 function formatJobDate(dateVal?: any): string | null {
-  if (!dateVal) return null;
-  try {
-    let date: Date;
-    if (typeof dateVal === 'object') {
-      const sec = dateVal._seconds || dateVal.seconds;
-      if (typeof sec === 'number') {
-        date = new Date(sec * 1000);
-      } else if (typeof dateVal.toDate === 'function') {
-        date = dateVal.toDate();
-      } else {
-        return null;
-      }
-    } else if (typeof dateVal === 'number') {
-      date = new Date(dateVal);
-    } else {
-      date = new Date(dateVal);
-    }
-    if (isNaN(date.getTime())) return null;
-    return date.toISOString().split('T')[0];
-  } catch {
-    return null;
-  }
+  // Shared parser (src/lib/dates) — this was one of four divergent copies.
+  return formatTimestampDate(dateVal);
 }
 
 export function JobCard({ job, userSkills, onApply, onDelete }: JobCardProps) {
